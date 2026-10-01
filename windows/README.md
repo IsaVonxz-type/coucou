@@ -77,6 +77,23 @@ only ask whether a key exists. Same for every integration key.
 No telemetry. The only network requests Coucou makes are to the services you
 configure yourself.
 
+### ChatGPT sign-in preview
+
+**Settings -> ChatGPT -> Continue with ChatGPT** opens the system browser for
+OpenAI's official OAuth flow for open-source, locally hosted apps. Availability
+and permission to use the ChatGPT plan depend on the account and workspace.
+
+This first stage connects the account only; Mochi's chat still uses Anthropic.
+The account picker keeps registrations separate. **Renew session** tests token
+renewal, and **Sign out** revokes the renewable session and removes its local
+tokens. If remote revocation cannot be confirmed, disconnect Coucou in ChatGPT
+Settings as well.
+
+Credentials stay in Windows Credential Manager, split into protected entries
+to accommodate large tokens. The browser callback listens only on `127.0.0.1`
+for up to five minutes. Coucou makes no OpenAI requests until you start sign-in
+or explicitly renew or disconnect a saved session.
+
 ## Build it yourself
 
 You need [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), and the

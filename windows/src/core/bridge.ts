@@ -90,6 +90,13 @@ export const Bridge = {
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),
   secretClear: (key: string) => callOrThrow<void>("secret_clear", { key }),
 
+  chatgptStatus: () => callOrThrow<ChatGPTStatus>("chatgpt_status"),
+  chatgptLogin: (clientId: string | null) => callOrThrow<ChatGPTStatus>("chatgpt_login", { clientId }),
+  chatgptCancel: () => callOrThrow<void>("chatgpt_cancel"),
+  chatgptSelect: (clientId: string) => callOrThrow<ChatGPTStatus>("chatgpt_select", { clientId }),
+  chatgptRefresh: () => callOrThrow<ChatGPTStatus>("chatgpt_refresh"),
+  chatgptLogout: () => callOrThrow<ChatGPTStatus>("chatgpt_logout"),
+
   // ── Integrations ──────────────────────────────────────────────────────────
   refreshIntegration: (id: string) => call<void>("refresh_integration", { id }),
   /** Opens the configured n8n instance in the browser. */
@@ -104,6 +111,19 @@ export interface IntegrationUpdate {
   data: Record<string, unknown>;
   error: string | null;
   event: { success: boolean; label: string; detail: string | null } | null;
+}
+
+export interface ChatGPTStatus {
+  pending: boolean;
+  activeClientId: string | null;
+  accounts: {
+    clientId: string;
+    email: string | null;
+    connected: boolean;
+    planEnabled: boolean;
+    expiresAt: number | null;
+  }[];
+  message: string | null;
 }
 
 export type ChatContext =

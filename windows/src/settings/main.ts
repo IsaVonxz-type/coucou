@@ -6,6 +6,7 @@ import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
+import { chatgptSection } from "./chatgpt";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -443,6 +444,7 @@ async function main() {
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
     apiSection(hasKey),
+    chatgptSection(),
     integrationsSection(present),
     generalSection(),
     h("div", {

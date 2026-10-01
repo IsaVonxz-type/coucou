@@ -1,6 +1,8 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
 mod claude;
+mod chatgpt;
+mod chatgpt_store;
 mod files;
 mod hooks;
 mod integrations;
@@ -126,10 +128,16 @@ fn open_url(url: String) {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return;
     }
-    let _ = Command::new("rundll32.exe")
-        .args(["url.dll,FileProtocolHandler", &url])
+    let _ = open_browser(&url);
+}
+
+fn open_browser(url: &str) -> Result<(), String> {
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
         .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "Could not open the system browser.".into())
 }
 
 /// "Open terminal" opens the working folder in VS Code when `code` is on PATH,
@@ -279,6 +287,36 @@ fn secret_clear(key: String) -> Result<(), String> {
     secrets::clear(&key)
 }
 
+#[tauri::command]
+fn chatgpt_status(auth: State<chatgpt::Auth>) -> Result<chatgpt::Status, String> {
+    auth.status()
+}
+
+#[tauri::command]
+async fn chatgpt_login(auth: State<'_, chatgpt::Auth>, client_id: Option<String>) -> Result<chatgpt::Status, String> {
+    auth.login(client_id).await
+}
+
+#[tauri::command]
+fn chatgpt_cancel(auth: State<chatgpt::Auth>) {
+    auth.cancel();
+}
+
+#[tauri::command]
+async fn chatgpt_select(auth: State<'_, chatgpt::Auth>, client_id: String) -> Result<chatgpt::Status, String> {
+    auth.select(client_id).await
+}
+
+#[tauri::command]
+async fn chatgpt_refresh(auth: State<'_, chatgpt::Auth>) -> Result<chatgpt::Status, String> {
+    auth.refresh().await
+}
+
+#[tauri::command]
+async fn chatgpt_logout(auth: State<'_, chatgpt::Auth>) -> Result<chatgpt::Status, String> {
+    auth.logout().await
+}
+
 /// Opens the configured n8n instance — the URL lives in the Credential Manager.
 #[tauri::command]
 fn open_n8n() {
@@ -380,6 +418,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Chat::default())
+        .manage(chatgpt::Auth::default())
         .invoke_handler(tauri::generate_handler![
             boot,
             save_settings,
@@ -403,6 +442,12 @@ pub fn run() {
             secret_present,
             secret_set,
             secret_clear,
+            chatgpt_status,
+            chatgpt_login,
+            chatgpt_cancel,
+            chatgpt_select,
+            chatgpt_refresh,
+            chatgpt_logout,
             refresh_integration,
             open_n8n,
             open_settings_window,
