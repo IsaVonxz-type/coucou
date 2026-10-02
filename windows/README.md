@@ -107,6 +107,20 @@ npm run tauri dev      # live-reloading development build
 npm run pack           # builds the installer and drops it in windows/release/
 ```
 
+### Checks
+
+Run Rust unit tests from `windows/`:
+
+```powershell
+cargo test --workspace --locked
+```
+
+`npm run build` checks TypeScript and builds the frontend; its `prebuild` hook
+also builds `coucou-hook`. Pull requests targeting `main` run these checks and
+the installer build on a clean Windows GitHub Actions runner. If local Windows
+security policy blocks unsigned Cargo build scripts, use this hosted check rather
+than changing the machine's application-control policy.
+
 `npm run dev` alone serves the front end in an ordinary browser, which is enough
 to work on the island's looks. It also serves `dev/upload-preview.html`, which
 replays the whole file-drop choreography on a loop — the one part of the UI that

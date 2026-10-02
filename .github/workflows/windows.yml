@@ -9,6 +9,8 @@ on:
       - 'feature/**'
     tags:
       - 'windows-v*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
