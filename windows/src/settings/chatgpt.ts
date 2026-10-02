@@ -50,8 +50,8 @@ export function chatgptSection(): HTMLElement {
       : busy
         ? "Updating ChatGPT connection..."
         : connected
-        ? `Connected as ${active.email ?? "ChatGPT account"}. Credentials stay in Windows Credential Manager.`
-        : "No active ChatGPT session. Continue in your browser to connect.";
+          ? `Connected as ${active.email ?? "ChatGPT account"}. Credentials stay in the OS secure credential store.`
+          : "No active ChatGPT session. Continue in your browser to connect.";
     clear(picker);
     if (!status.accounts.length) picker.append(h("option", { text: "No saved accounts", value: "" }));
     for (const [index, account] of status.accounts.entries()) {
