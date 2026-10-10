@@ -200,6 +200,7 @@ fn is_inside(dir: &std::path::Path, path: &std::path::Path) -> bool {
 pub async fn send(
     app: &AppHandle,
     chat: &Chat,
+    auth: &crate::chatgpt::Auth,
     settings: &Settings,
     query: String,
     context: Option<ChatContext>,
@@ -211,7 +212,8 @@ pub async fn send(
         return claude::send(chat, &model, query, context).await;
     }
     if let Some(p) = openai_compat::provider(provider) {
-        return openai_compat::send(chat, p, &model, query, context).await;
+        let signed_in_token = if p.id == "openai" { auth.access_token().await } else { None };
+        return openai_compat::send(chat, p, &model, query, context, signed_in_token).await;
     }
     if let Some(server) = local_chat::server(settings, provider) {
         return local_chat::send(app, chat, &server, &model, query, context).await;
@@ -222,14 +224,19 @@ pub async fn send(
 /// The models `provider` offers. Asked only when the user opens the picker on
 /// that provider, and only once it has a key (or, for a local server, an
 /// address): nothing is sent anywhere before that.
-pub async fn models(settings: &Settings, provider: &str) -> Result<Vec<ModelInfo>, String> {
+pub async fn models(
+    auth: &crate::chatgpt::Auth,
+    settings: &Settings,
+    provider: &str,
+) -> Result<Vec<ModelInfo>, String> {
     let no_key = || crate::i18n::t("No API key — add it in Settings.");
     if provider == ANTHROPIC {
         let key = secrets::get(claude::KEY).ok_or_else(no_key)?;
         return claude::models(&key).await;
     }
     if let Some(p) = openai_compat::provider(provider) {
-        let key = secrets::get(p.key).ok_or_else(no_key)?;
+        let signed_in_token = if p.id == "openai" { auth.access_token().await } else { None };
+        let key = secrets::get(p.key).or(signed_in_token).ok_or_else(no_key)?;
         return openai_compat::models(p, &key).await;
     }
     if let Some(server) = local_chat::server(settings, provider) {

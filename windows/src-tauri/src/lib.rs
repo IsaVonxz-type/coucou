@@ -457,19 +457,24 @@ async fn chat_send(
     app: AppHandle,
     shared: State<'_, Shared>,
     chat: State<'_, Chat>,
+    auth: State<'_, chatgpt::Auth>,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     let settings = shared.settings.lock().unwrap().clone();
-    chat::send(&app, &chat, &settings, query, context).await
+    chat::send(&app, &chat, &auth, &settings, query, context).await
 }
 
 /// The models a provider offers, for the picker in the chat view. Only asked
 /// once the user picked that provider, and only with its key or address.
 #[tauri::command]
-async fn chat_models(shared: State<'_, Shared>, provider: String) -> Result<Vec<ModelInfo>, String> {
+async fn chat_models(
+    shared: State<'_, Shared>,
+    auth: State<'_, chatgpt::Auth>,
+    provider: String,
+) -> Result<Vec<ModelInfo>, String> {
     let settings = shared.settings.lock().unwrap().clone();
-    chat::models(&settings, &provider).await
+    chat::models(&auth, &settings, &provider).await
 }
 
 /// Settings → Local models → Connect: does the server answer, and with which models?

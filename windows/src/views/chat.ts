@@ -72,6 +72,16 @@ interface Picker {
   readonly isOpen: boolean;
 }
 
+async function signedInWithChatGPT(providerId: string): Promise<boolean> {
+  if (providerId !== "openai") return false;
+  try {
+    const status = await Bridge.chatgptStatus();
+    return status.accounts.some((a) => a.clientId === status.activeClientId && a.connected && a.planEnabled);
+  } catch {
+    return false;
+  }
+}
+
 /** Provider chips, then the chosen provider's models — ModelPickerView. */
 function buildPicker(onChange: () => void): Picker {
   const chips = h("div", { class: "picker-chips" });
@@ -152,7 +162,7 @@ function buildPicker(onChange: () => void): Picker {
       return;
     }
     // Nothing is asked of a provider that has no key yet.
-    if (p.key && !(await Bridge.secretPresent(p.key))) {
+    if (p.key && !(await Bridge.secretPresent(p.key)) && !(await signedInWithChatGPT(p.id))) {
       if (ticket === request) status(t(STRINGS.noKey), true);
       return;
     }

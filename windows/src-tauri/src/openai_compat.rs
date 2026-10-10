@@ -117,6 +117,98 @@ fn request_body(p: &Provider, model: &str, system: &str, history: &[Value], user
     body
 }
 
+fn responses_part(part: &Value) -> Value {
+    match part.get("type").and_then(Value::as_str) {
+        Some("image_url") => json!({
+            "type": "input_image",
+            "image_url": part.pointer("/image_url/url").cloned().unwrap_or(Value::Null),
+        }),
+        _ => json!({ "type": "input_text", "text": part.get("text").cloned().unwrap_or(Value::Null) }),
+    }
+}
+
+fn responses_item(message: &Value) -> Value {
+    let content = match message.get("content") {
+        Some(Value::Array(parts)) => Value::Array(parts.iter().map(responses_part).collect()),
+        Some(other) => other.clone(),
+        None => Value::Null,
+    };
+    json!({ "role": message.get("role").cloned().unwrap_or(Value::Null), "content": content })
+}
+
+fn responses_body(model: &str, system: &str, history: &[Value], user: &Value) -> Value {
+    let input: Vec<Value> = history.iter().chain(std::iter::once(user)).map(responses_item).collect();
+    json!({
+        "model": model,
+        "instructions": system,
+        "input": input,
+        "store": false,
+        "stream": true,
+    })
+}
+
+fn responses_text(p: &Provider, response: &Value) -> Result<String, String> {
+    let text: String = response
+        .get("output")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("content").and_then(Value::as_array))
+                .flatten()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !text.is_empty() {
+        return Ok(text);
+    }
+    if let Some(msg) = response.pointer("/error/message").and_then(Value::as_str) {
+        return Err(format!("{}: {msg}", p.name));
+    }
+    Err(t("No response text."))
+}
+
+/// The answer of a streamed Responses reply: the text deltas joined, or the
+/// text of the final `response.completed` event when no delta came.
+fn responses_stream_text(p: &Provider, body: &str) -> Result<String, String> {
+    let mut deltas = String::new();
+    let mut completed: Option<Value> = None;
+    for event in body.lines().filter_map(|line| line.strip_prefix("data:")) {
+        let Ok(event) = serde_json::from_str::<Value>(event.trim()) else { continue };
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                    deltas.push_str(delta);
+                }
+            }
+            Some("response.completed") => completed = event.get("response").cloned(),
+            Some("response.failed") | Some("error") => {
+                let msg = event
+                    .pointer("/response/error/message")
+                    .or_else(|| event.pointer("/error/message"))
+                    .or_else(|| event.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("request failed");
+                return Err(format!("{}: {msg}", p.name));
+            }
+            _ => {}
+        }
+    }
+    let text = deltas.trim();
+    if !text.is_empty() {
+        return Ok(text.to_string());
+    }
+    match completed {
+        Some(response) => responses_text(p, &response),
+        None => Err(t("No response text.")),
+    }
+}
+
 /// The answer's text, or the error the provider put in a 200 reply
 /// (OpenRouter does when the upstream model fails).
 fn reply_text(p: &Provider, response: &Value) -> Result<String, String> {
@@ -158,16 +250,24 @@ pub async fn send(
     model: &str,
     query: String,
     context: Option<ChatContext>,
+    signed_in_token: Option<String>,
 ) -> Result<ChatReply, String> {
-    let key = secrets::get(p.key).ok_or_else(|| tf("{name} API key missing. Add it in Settings.", &[("name", p.name)]))?;
+    let api_key = secrets::get(p.key);
+    let responses = api_key.is_none() && signed_in_token.is_some();
+    let key = api_key.or(signed_in_token).ok_or_else(|| tf("{name} API key missing. Add it in Settings.", &[("name", p.name)]))?;
     if model.is_empty() {
         return Err(tf("Pick a {name} model above the chat box.", &[("name", p.name)]));
     }
     let turn = chat.begin(p.id);
     let user = user_message(turn.first, context.as_ref(), &query);
-    let body = request_body(p, model, &chat::system_prompt(false), &turn.history, &user);
+    let system = chat::system_prompt(false);
+    let (body, tail) = if responses {
+        (responses_body(model, &system, &turn.history, &user), "responses")
+    } else {
+        (request_body(p, model, &system, &turn.history, &user), "chat/completions")
+    };
 
-    let endpoint = url(p, "chat/completions")?;
+    let endpoint = url(p, tail)?;
     let response = net::client(&endpoint, Duration::from_secs(90))?
         .post(endpoint)
         .bearer_auth(&key)
@@ -181,8 +281,12 @@ pub async fn send(
         return Err(status_error(p, status.as_u16(), &net::error_detail(&body)));
     }
     let bytes = net::read_capped(response, net::MAX_BODY).await?;
-    let json: Value = serde_json::from_slice(&bytes).map_err(|e| tf("Bad API response: {error}", &[("error", &e.to_string())]))?;
-    let text = reply_text(p, &json)?;
+    let text = if responses {
+        responses_stream_text(p, &String::from_utf8_lossy(&bytes))?
+    } else {
+        let json: Value = serde_json::from_slice(&bytes).map_err(|e| tf("Bad API response: {error}", &[("error", &e.to_string())]))?;
+        reply_text(p, &json)?
+    };
 
     let plain = chat::plain_question(turn.first, context.as_ref(), &query);
     chat.commit(&turn, user, json!({ "role": "assistant", "content": text }), &plain, &text);
@@ -210,7 +314,12 @@ pub async fn models(p: &Provider, key: &str) -> Result<Vec<ModelInfo>, String> {
 }
 
 fn parse_models(p: &Provider, json: &Value) -> Vec<ModelInfo> {
-    let items = json.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+    let items = json
+        .get("data")
+        .or_else(|| json.get("models"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let mut models: Vec<(ModelInfo, i64, bool)> = items
         .iter()
         .filter(|m| {
@@ -219,8 +328,9 @@ fn parse_models(p: &Provider, json: &Value) -> Vec<ModelInfo> {
                 .and_then(Value::as_array)
                 .is_none_or(|mods| mods.iter().any(|x| x.as_str() == Some("text")))
         })
+        .filter(|m| m.get("visibility").and_then(Value::as_str).is_none_or(|v| v == "list"))
         .filter_map(|m| {
-            let raw = m.get("id")?.as_str()?;
+            let raw = m.get("id").or_else(|| m.get("slug"))?.as_str()?;
             // Gemini sometimes answers "models/gemini-…".
             let id = raw.strip_prefix("models/").unwrap_or(raw).to_string();
             let lower = id.to_lowercase();
@@ -229,7 +339,11 @@ fn parse_models(p: &Provider, json: &Value) -> Vec<ModelInfo> {
             }
             let created = m.get("created").and_then(Value::as_i64).unwrap_or(0);
             let free = p.id == "openrouter" && is_free(m, &id);
-            let name = m.get("name").and_then(Value::as_str).unwrap_or(&id);
+            let name = m
+                .get("name")
+                .or_else(|| m.get("display_name"))
+                .and_then(Value::as_str)
+                .unwrap_or(&id);
             let label = if free && !name.to_lowercase().contains("(free)") { format!("{name} (free)") } else { name.to_string() };
             Some((ModelInfo { id, label }, created, free))
         })
@@ -411,6 +525,70 @@ mod tests {
         let models = parse_models(p("openrouter"), &openrouter);
         let labels: Vec<_> = models.iter().map(|m| m.label.as_str()).collect();
         assert_eq!(labels, vec!["A (free)", "C Zero (free)", "B Paid"]);
+    }
+
+    #[test]
+    fn a_streamed_responses_reply_is_the_deltas_joined() {
+        let body = concat!(
+            "event: response.created
+data: {\"type\":\"response.created\"}
+
+",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}
+
+",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}
+
+",
+            "data: {\"type\":\"response.completed\",\"response\":{}}
+
+",
+        );
+        assert_eq!(responses_stream_text(p("openai"), body).unwrap(), "Hello");
+    }
+
+    #[test]
+    fn a_streamed_reply_without_deltas_falls_back_to_the_completed_event() {
+        let body = "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"content\":[{\"type\":\"output_text\",\"text\":\"Hi\"}]}]}}
+";
+        assert_eq!(responses_stream_text(p("openai"), body).unwrap(), "Hi");
+        assert_eq!(responses_stream_text(p("openai"), "").unwrap_err(), "No response text.");
+    }
+
+    #[test]
+    fn a_failed_stream_reports_the_providers_message() {
+        let body = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"nope\"}}}
+";
+        assert_eq!(responses_stream_text(p("openai"), body).unwrap_err(), "OpenAI: nope");
+    }
+
+    #[test]
+    fn the_responses_body_streams_and_maps_images_and_text() {
+        let user = json!({"role":"user","content":[
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,AA"}},
+            {"type":"text","text":"what?"}
+        ]});
+        let history = vec![json!({"role":"assistant","content":"b"})];
+        let body = responses_body("gpt-x", "sys", &history, &user);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["store"], false);
+        assert_eq!(body["instructions"], "sys");
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input[0], json!({"role":"assistant","content":"b"}));
+        assert_eq!(input[1]["content"][0], json!({"type":"input_image","image_url":"data:image/png;base64,AA"}));
+        assert_eq!(input[1]["content"][1], json!({"type":"input_text","text":"what?"}));
+    }
+
+    #[test]
+    fn the_signed_in_catalog_lists_visible_models_by_slug() {
+        let catalog = json!({"models":[
+            {"slug":"gpt-a","display_name":"GPT A","visibility":"list"},
+            {"slug":"gpt-hidden","display_name":"Hidden","visibility":"hide"}
+        ]});
+        let models = parse_models(p("openai"), &catalog);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-a");
+        assert_eq!(models[0].label, "GPT A");
     }
 
     #[test]

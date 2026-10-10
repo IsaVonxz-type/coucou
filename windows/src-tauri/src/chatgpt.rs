@@ -177,6 +177,25 @@ impl Auth {
         Ok(status_from(chatgpt_store::load()?, pending, None))
     }
 
+    pub async fn access_token(&self) -> Option<String> {
+        let usable = |store: &Store| {
+            let account = &store.accounts[active_index(store).ok()?];
+            let session = account.session.as_ref()?;
+            session
+                .scopes
+                .iter()
+                .any(|scope| scope == PLAN_SCOPE)
+                .then(|| (session.access_token.clone(), session.expires_at))
+        };
+        let (token, expires_at) = usable(&chatgpt_store::load().ok()?)?;
+        if expires_at > now() + 60 {
+            return Some(token);
+        }
+        let _ = self.refresh().await;
+        let (token, expires_at) = usable(&chatgpt_store::load().ok()?)?;
+        (expires_at > now()).then_some(token)
+    }
+
     pub fn cancel(&self) {
         if let Some(sender) = self.pending.lock().unwrap().as_ref() {
             let _ = sender.send(true);
@@ -229,7 +248,7 @@ impl Auth {
         Ok(status_from(
             store,
             false,
-            Some("Connected. ChatGPT chat support is the next step.".into()),
+            Some("Connected. Pick OpenAI in the chat to use your ChatGPT plan.".into()),
         ))
     }
 
