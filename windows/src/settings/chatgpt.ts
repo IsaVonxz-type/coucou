@@ -9,7 +9,7 @@ export function chatgptSection(): HTMLElement {
   const picker = h("select", { "aria-label": "ChatGPT account registration" }) as HTMLSelectElement;
   const section = h("section", {},
     h("h2", {}, dot, h("span", { text: "ChatGPT" })),
-    h("div", { class: "hint", text: "Connect your ChatGPT account through the official OAuth preview. This step saves your connection; chat support will follow." }),
+    h("div", { class: "hint", text: "Connect your ChatGPT account through the official OAuth preview. This saves your account session; chat requests still use the configured provider credentials." }),
     accountInfo,
     h("div", { class: "row" }, h("label", { text: "Account", for: "chatgpt-account" }), picker),
     actions,

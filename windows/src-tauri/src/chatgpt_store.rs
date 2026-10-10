@@ -23,15 +23,15 @@ trait Credentials {
     fn remove(&self, name: &str) -> Result<(), String>;
 }
 
-struct WindowsCredentials;
+struct PlatformCredentials;
 
-impl Credentials for WindowsCredentials {
+impl Credentials for PlatformCredentials {
     fn read(&self, name: &str) -> Result<Option<String>, String> {
         match credential(name)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => {
-                Err("Could not read ChatGPT credentials from Windows Credential Manager.".into())
+                Err("Could not read ChatGPT credentials from the OS secure credential store.".into())
             }
         }
     }
@@ -39,13 +39,13 @@ impl Credentials for WindowsCredentials {
     fn write(&self, name: &str, value: &str) -> Result<(), String> {
         credential(name)?
             .set_password(value)
-            .map_err(|_| "Could not save ChatGPT credentials in Windows Credential Manager.".into())
+            .map_err(|_| "Could not save ChatGPT credentials in the OS secure credential store.".into())
     }
 
     fn remove(&self, name: &str) -> Result<(), String> {
         match credential(name)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err("Could not remove old ChatGPT credential fragments from Windows Credential Manager.".into()),
+            Err(_) => Err("Could not remove old ChatGPT credentials from the OS secure credential store.".into()),
         }
     }
 }
@@ -84,7 +84,7 @@ fn remove_chunks(credentials: &impl Credentials, manifest: &Manifest) -> Result<
 
 pub fn load<T: DeserializeOwned + Default>() -> Result<T, String> {
     let _storage = STORAGE_LOCK.lock().unwrap();
-    load_with(&WindowsCredentials)
+    load_with(&PlatformCredentials)
 }
 
 fn load_with<T: DeserializeOwned + Default>(credentials: &impl Credentials) -> Result<T, String> {
@@ -106,7 +106,7 @@ fn load_with<T: DeserializeOwned + Default>(credentials: &impl Credentials) -> R
 
 pub fn save<T: Serialize>(value: &T) -> Result<(), String> {
     let _storage = STORAGE_LOCK.lock().unwrap();
-    save_with(&WindowsCredentials, value)
+    save_with(&PlatformCredentials, value)
 }
 
 fn save_with<T: Serialize>(credentials: &impl Credentials, value: &T) -> Result<(), String> {
